@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>加特林生存 — 无限子弹射击</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;overflow:hidden;cursor:none;user-select:none;font-family:'Courier New',monospace}
+canvas{display:block}
+#ui{position:fixed;top:0;left:0;width:100%;pointer-events:none;z-index:10}
+#hud{display:flex;justify-content:space-between;padding:12px 20px;color:#fff;font-size:14px;text-shadow:0 0 10px rgba(0,255,100,0.8)}
+.hud-item{background:rgba(0,0,0,0.6);padding:6px 14px;border-radius:4px;border:1px solid rgba(0,255,100,0.3)}
+.hud-item span{color:#0f0;font-weight:bold}
+#levelup{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);display:none;z-index:20}
+#levelup.show{display:block}
+#levelup .title{text-align:center;color:#ff0;font-size:28px;text-shadow:0 0 20px #ff0;margin-bottom:16px}
+#levelup .cards{display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
+.card{background:rgba(0,0,0,0.85);border:2px solid #0f0;border-radius:8px;padding:14px;width:160px;cursor:pointer;pointer-events:auto;transition:all .2s}
+.card:hover{border-color:#ff0;box-shadow:0 0 20px rgba(255,255,0,0.4);transform:scale(1.05)}
+.card h3{color:#0f0;font-size:14px;margin-bottom:6px}
+.card p{color:#aaa;font-size:11px;line-height:1.4}
+#crosshair{position:fixed;pointer-events:none;z-index:30;width:24px;height:24px;transform:translate(-50%,-50%)}
+#crosshair::before,#crosshair::after{content:'';position:absolute;background:#f00}
+#crosshair::before{width:2px;height:100%;left:11px;top:0}
+#crosshair::after{height:2px;width:100%;left:0;top:11px}
+#start{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:100;text-align:center}
+#start h1{color:#0f0;font-size:48px;text-shadow:0 0 30px #0f0,0 0 60px #0f0;margin-bottom:8px;letter-spacing:4px}
+#start .sub{color:#ff0;font-size:16px;margin-bottom:24px}
+#start button{background:#0f0;color:#000;border:none;padding:14px 40px;font-size:20px;font-weight:bold;border-radius:8px;cursor:pointer;letter-spacing:2px}
+#start button:hover{background:#ff0;box-shadow:0 0 30px #ff0}
+#start .tips{color:#666;font-size:12px;margin-top:16px}
+#gameover{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);display:none;z-index:100;text-align:center}
+#gameover .go-title{color:#f00;font-size:42px;text-shadow:0 0 30px #f00;margin-bottom:12px}
+#gameover .stats{color:#fff;font-size:16px;margin-bottom:16px;line-height:1.8}
+#gameover button{background:#f00;color:#fff;border:none;padding:12px 32px;font-size:18px;border-radius:8px;cursor:pointer}
+#gameover button:hover{box-shadow:0 0 20px #f00}
+</style>
+</head>
+<body>
+
+<div id="start">
+<h1>🔫 加特林生存</h1>
+<div class="sub">无限子弹 · 弹幕地狱 · 杀到天亮</div>
+<button onclick="startGame()">⚔ 开始屠杀</button>
+<div class="tips">WASD 移动 | 鼠标瞄准 + 自动射击 | 杀敌升级</div>
+</div>
+
+<div id="gameover">
+<div class="go-title">💀 你死了</div>
+<div class="stats" id="gostats"></div>
+<button onclick="startGame()">🔄 再来一局</button>
+</div>
+
+<div id="ui">
+<div id="hud">
+<div class="hud-item">💀 击杀: <span id="kills">0</span></div>
+<div class="hud-item">🌊 波次: <span id="wave">1</span></div>
+<div class="hud-item">⭐ 等级: <span id="lvl">1</span></div>
+<div class="hud-item">❤️ <span id="hp">100</span></div>
+<div class="hud-item">🔫 射速: <span id="fr">8</span>/s</div>
+<div class="hud-item">💥 伤害: <span id="dmg">1</span></div>
+</div>
+</div>
+
+<div id="crosshair"></div>
+<div id="levelup"><div class="title">🎯 升级！选择技能</div><div class="cards" id="upcards"></div></div>
+
+<canvas id="game"></canvas>
+
+<script>
+// ==================== 音频引擎 ====================
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let actx;
+
+function initAudio(){if(!actx) actx = new AudioCtx()}
+
+function sfxShoot(){
+  if(!actx) return;
+  const t = actx.currentTime;
+  // 白噪声脉冲 — 枪声
+  const buf = actx.createBuffer(1, actx.sampleRate*0.06, actx.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i] = (Math.random()*2-1) * Math.exp(-i/(actx.sampleRate*0.008));
+  const src = actx.createBufferSource(); src.buffer = buf;
+  const flt = actx.createBiquadFilter(); flt.type='lowpass'; flt.frequency.setValueAtTime(3000,t); flt.frequency.exponentialRampToValueAtTime(200,t+0.05);
+  const gain = actx.createGain(); gain.gain.setValueAtTime(0.3,t); gain.gain.exponentialRampToValueAtTime(0.001,t+0.06);
+  src.connect(flt); flt.connect(gain); gain.connect(actx.destination);
+  src.start(t); src.stop(t+0.06);
+  // 低频脉冲 — 加特林"突突"
+  const osc = actx.createOscillator(); osc.type='square'; osc.frequency.setValueAtTime(80,t); osc.frequency.exponentialRampToValueAtTime(30,t+0.05);
+  const og = actx.createGain(); og.gain.setValueAtTime(0.15,t); og.gain.exponentialRampToValueAtTime(0.001,t+0.05);
+  osc.connect(og); og.connect(actx.destination);
+  osc.start(t); osc.stop(t+0.05);
+}
+
+function sfxExplosion(){
+  if(!actx) return;
+  const t = actx.currentTime;
+  const buf = actx.createBuffer(1, actx.sampleRate*0.3, actx.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i] = (Math.random()*2-1) * Math.exp(-i/(actx.sampleRate*0.06));
+  const src = actx.createBufferSource(); src.buffer = buf;
+  const flt = actx.createBiquadFilter(); flt.type='lowpass'; flt.frequency.setValueAtTime(800,t); flt.frequency.exponentialRampToValueAtTime(50,t+0.3);
+  const gain = actx.createGain(); gain.gain.setValueAtTime(0.5,t); gain.gain.exponentialRampToValueAtTime(0.001,t+0.3);
+  src.connect(flt); flt.connect(gain); gain.connect(actx.destination);
+  src.start(t); src.stop(t+0.3);
+}
+
+function sfxHit(){
+  if(!actx) return;
+  const t = actx.currentTime;
+  const osc = actx.createOscillator(); osc.type='sine'; osc.frequency.setValueAtTime(600,t); osc.frequency.exponentialRampToValueAtTime(200,t+0.08);
+  const gain = actx.createGain(); gain.gain.setValueAtTime(0.2,t); gain.gain.exponentialRampToValueAtTime(0.001,t+0.08);
+  osc.connect(gain); gain.connect(actx.destination);
+  osc.start(t); osc.stop(t+0.08);
+}
+
+function sfxLevelUp(){
+  if(!actx) return;
+  const t = actx.currentTime;
+  [400,600,800,1000].forEach((f,i)=>{
+    const osc = actx.createOscillator(); osc.type='sine'; osc.frequency.value = f;
+    const gain = actx.createGain(); gain.gain.setValueAtTime(0,t+i*0.08); gain.gain.setValueAtTime(0.15,t+i*0.08); gain.gain.exponentialRampToValueAtTime(0.001,t+i*0.08+0.15);
+    osc.connect(gain); gain.connect(actx.destination);
+    osc.start(t+i*0.08); osc.stop(t+i*0.08+0.15);
+  });
+}
+
+// ==================== 游戏引擎 ====================
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const crosshair = document.getElementById('crosshair');
+let W,H,mx=0,my=0,keys={},running=false,paused=false;
+let player,bullets,enemies,particles,shakeX,shakeY;
+let kills=0,wave=1,level=1,xp=0,xpNeed=10,hp=100,maxHp=100;
+let fireRate=8,damage=1,bulletSpeed=800,bulletSize=2;
+let multiShot=1,spreadAngle=0.08,playerSpeed=200;
+let lastShot=0,waveTimer=0,waveDuration=20,enemiesThisWave=0;
+let enemySpawnQueue=[];
+const upgrades = [
+  {name:'射速提升',desc:'+4 发/秒',apply:()=>fireRate+=4,icon:'🔫'},
+  {name:'伤害强化',desc:'+1 伤害',apply:()=>damage+=1,icon:'💥'},
+  {name:'双管齐下',desc:'+1 弹道',apply:()=>multiShot+=1,icon:'🔀'},
+  {name:'高速子弹',desc:'子弹速度+30%',apply:()=>bulletSpeed*=1.3,icon:'🚀'},
+  {name:'大口径',desc:'子弹+1px',apply:()=>bulletSize+=1,icon:'🕳️'},
+  {name:'健步如飞',desc:'移速+25%',apply:()=>playerSpeed*=1.25,icon:'👟'},
+  {name:'生命恢复',desc:'回满血量',apply:()=>hp=maxHp,icon:'❤️'},
+  {name:'扩散射击',desc:'弹道扩散+50%',apply:()=>spreadAngle*=1.5,icon:'🌀'},
+];
+
+function resize(){
+  W=canvas.width=window.innerWidth;
+  H=canvas.height=window.innerHeight;
+}
+window.addEventListener('resize',resize);
+
+window.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;crosshair.style.left=mx+'px';crosshair.style.top=my+'px'});
+window.addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(e.key==='p')paused=!paused});
+window.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false});
+
+function startGame(){
+  initAudio();
+  document.getElementById('start').style.display='none';
+  document.getElementById('gameover').style.display='none';
+  resize();
+  player={x:W/2,y:H/2,r:16,angle:0};
+  bullets=[]; enemies=[]; particles=[]; shakeX=0;shakeY=0;
+  kills=0;wave=1;level=1;xp=0;xpNeed=10;hp=maxHp=100;
+  fireRate=8;damage=1;bulletSpeed=800;bulletSize=2;
+  multiShot=1;spreadAngle=0.08;playerSpeed=200;
+  lastShot=performance.now();waveTimer=0;enemiesThisWave=0;
+  enemySpawnQueue=[];
+  spawnWave();
+  updateHUD();
+  running=true;
+  document.body.style.cursor='none';
+  crosshair.style.display='block';
+  gameLoop(performance.now());
+}
+
+function spawnWave(){
+  const count = 5 + wave * 3 + Math.floor(kills/10);
+  enemySpawnQueue = [];
+  for(let i=0;i<count;i++){
+    enemySpawnQueue.push({delay:i*0.3 + Math.random()*0.5, hp: 1 + Math.floor(wave/3)});
+  }
+  enemiesThisWave=count;
+}
+
+function spawnEnemy(hpBonus=1){
+  const side = Math.floor(Math.random()*4);
+  let x,y;
+  const margin=40;
+  switch(side){
+    case 0:x=Math.random()*W;y=-margin;break;
+    case 1:x=W+margin;y=Math.random()*H;break;
+    case 2:x=Math.random()*W;y=H+margin;break;
+    case 3:x=-margin;y=Math.random()*H;break;
+  }
+  enemies.push({
+    x,y,r:10+Math.random()*8,
+    hp:1+Math.floor(wave/3)+Math.floor(Math.random()*hpBonus),
+    maxHp:0,
+    speed:60+Math.random()*wave*8+level*2,
+    color:Math.random()<0.15?'#ff0':'#f44',
+    flash:0
+  });
+  enemies[enemies.length-1].maxHp = enemies[enemies.length-1].hp;
+}
+
+function spawnParticles(x,y,color,count,spd,life){
+  for(let i=0;i<count;i++){
+    const a=Math.random()*Math.PI*2;
+    const s=spd*(0.3+Math.random());
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:life*(0.5+Math.random()*0.5),maxLife:life,color,size:1+Math.random()*2.5});
+  }
+}
+
+function doLevelUp(){
+  running=false;
+  sfxLevelUp();
+  document.getElementById('lvl').textContent=level;
+  const cardsDiv=document.getElementById('upcards');
+  // 随机选3个技能
+  const pool = [...upgrades].sort(()=>Math.random()-0.5).slice(0,3);
+  cardsDiv.innerHTML = pool.map((u,i)=>`<div class="card" onclick="pickUpgrade(${i})"><h3>${u.icon} ${u.name}</h3><p>${u.desc}</p></div>`).join('');
+  document.getElementById('levelup').classList.add('show');
+  window._upgradePool=pool;
+}
+
+function pickUpgrade(i){
+  window._upgradePool[i].apply();
+  document.getElementById('levelup').classList.remove('show');
+  updateHUD();
+  running=true;
+  gameLoop(performance.now());
+}
+
+function updateHUD(){
+  document.getElementById('kills').textContent=kills;
+  document.getElementById('wave').textContent=wave;
+  document.getElementById('lvl').textContent=level;
+  document.getElementById('hp').textContent=Math.ceil(hp);
+  document.getElementById('fr').textContent=fireRate;
+  document.getElementById('dmg').textContent=damage;
+}
+
+function hitPlayer(dmg){
+  hp-=dmg;
+  spawnParticles(player.x,player.y,'#fff',8,120,0.4);
+  shakeX=(Math.random()-0.5)*12; shakeY=(Math.random()-0.5)*12;
+  sfxHit();
+  if(hp<=0){gameOver();return;}
+  updateHUD();
+}
+
+function gameOver(){
+  running=false;
+  document.getElementById('gostats').innerHTML = `
+    击杀: <span style="color:#0f0">${kills}</span><br>
+    波次: <span style="color:#ff0">${wave}</span><br>
+    等级: <span style="color:#0ff">${level}</span><br>
+    射速: ${fireRate}/s | 伤害: ${damage}
+  `;
+  document.getElementById('gameover').style.display='block';
+  crosshair.style.display='none';
+  document.body.style.cursor='default';
+  // 死亡大爆炸
+  spawnParticles(player.x,player.y,'#f80',40,300,1.5);
+  spawnParticles(player.x,player.y,'#f00',30,250,1.2);
+}
+
+function gameLoop(now){
+  if(!running){return;}
+  requestAnimationFrame(gameLoop);
+  if(paused) return;
+  
+  const dt = Math.min((now - (window._lastNow||now))/1000, 0.05);
+  window._lastNow=now;
+  
+  // 屏幕震动衰减
+  shakeX *= 0.85; shakeY *= 0.85;
+  if(Math.abs(shakeX)<0.1) shakeX=0;
+  if(Math.abs(shakeY)<0.1) shakeY=0;
+  
+  // --- 玩家移动 ---
+  let dx=0,dy=0;
+  if(keys['w']||keys['arrowup']) dy=-1;
+  if(keys['s']||keys['arrowdown']) dy=1;
+  if(keys['a']||keys['arrowleft']) dx=-1;
+  if(keys['d']||keys['arrowright']) dx=1;
+  if(dx&&dy){dx*=0.707;dy*=0.707;}
+  player.x += dx*playerSpeed*dt;
+  player.y += dy*playerSpeed*dt;
+  player.x = Math.max(player.r,Math.min(W-player.r,player.x));
+  player.y = Math.max(player.r,Math.min(H-player.r,player.y));
+  
+  // 玩家朝向鼠标
+  player.angle = Math.atan2(my-player.y, mx-player.x);
+  
+  // --- 射击 ---
+  const shotInterval = 1/fireRate;
+  while(now - lastShot >= shotInterval*1000){
+    lastShot += shotInterval*1000;
+    for(let s=0;s<multiShot;s++){
+      let a = player.angle;
+      if(multiShot>1){
+        a += (s-(multiShot-1)/2)*spreadAngle;
+      }
+      a += (Math.random()-0.5)*0.04; // 轻微随机散布
+      const bx = player.x + Math.cos(a)*player.r;
+      const by = player.y + Math.sin(a)*player.r;
+      bullets.push({x:bx,y:by,vx:Math.cos(a)*bulletSpeed,vy:Math.sin(a)*bulletSpeed,life:1.5});
+    }
+    sfxShoot();
+    // 枪口火焰粒子
+    const fx = player.x + Math.cos(player.angle)*(player.r+8);
+    const fy = player.y + Math.sin(player.angle)*(player.r+8);
+    spawnParticles(fx,fy,'#ff0',1,30,0.08);
+    // 弹壳
+    const cx = player.x + Math.cos(player.angle+Math.PI/2)*6;
+    const cy = player.y + Math.sin(player.angle+Math.PI/2)*6;
+    const ca = player.angle + Math.PI + (Math.random()-0.5)*0.6;
+    particles.push({x:cx,y:cy,vx:Math.cos(ca)*(80+Math.random()*60),vy:Math.sin(ca)*(80+Math.random()*60),life:0.5,maxLife:0.5,color:'#ca0',size:1.5});
+  }
+  
+  // --- 子弹更新 ---
+  for(let i=bullets.length-1;i>=0;i--){
+    const b=bullets[i];
+    b.x+=b.vx*dt; b.y+=b.vy*dt;
+    b.life-=dt;
+    if(b.life<=0||b.x<0||b.x>W||b.y<0||b.y>H){bullets.splice(i,1);continue;}
+    // 碰撞检测
+    for(let j=enemies.length-1;j>=0;j--){
+      const e=enemies[j];
+      const edx=b.x-e.x,edy=b.y-e.y;
+      if(Math.sqrt(edx*edx+edy*edy) < e.r+bulletSize){
+        e.hp -= damage;
+        e.flash=0.06;
+        spawnParticles(b.x,b.y,'#ff0',2,60,0.15);
+        bullets.splice(i,1);
+        if(e.hp<=0){
+          spawnParticles(e.x,e.y,'#f80',8,100,0.5);
+          spawnParticles(e.x,e.y,'#f00',6,80,0.4);
+          sfxHit();
+          kills++;
+          xp++;
+          enemies.splice(j,1);
+          enemiesThisWave--;
+          // 大敌人爆炸
+          if(e.maxHp>=3) sfxExplosion();
+          if(xp>=xpNeed){
+            xp-=xpNeed;
+            level++;
+            xpNeed = Math.floor(xpNeed*1.4);
+            doLevelUp();
+            updateHUD();
+          }
+        }
+        updateHUD();
+        break;
+      }
+    }
+  }
+  
+  // --- 敌人生成队列 ---
+  waveTimer+=dt;
+  for(let i=enemySpawnQueue.length-1;i>=0;i--){
+    enemySpawnQueue[i].delay-=dt;
+    if(enemySpawnQueue[i].delay<=0){
+      spawnEnemy(wave);
+      enemySpawnQueue.splice(i,1);
+    }
+  }
+  if(enemySpawnQueue.length===0 && enemies.length===0 && enemiesThisWave<=0){
+    wave++;
+    waveTimer=0;
+    spawnWave();
+    updateHUD();
+    // 波次特效
+    for(let i=0;i<20;i++){
+      particles.push({x:Math.random()*W,y:Math.random()*H,vx:0,vy:0,life:0.8,maxLife:0.8,color:'#0f0',size:3});
+    }
+  }
+  
+  // --- 敌人更新 ---
+  for(let i=enemies.length-1;i>=0;i--){
+    const e=enemies[i];
+    const edx=player.x-e.x, edy=player.y-e.y;
+    const dist=Math.sqrt(edx*edx+edy*edy);
+    if(dist>1){
+      e.x += (edx/dist)*e.speed*dt;
+      e.y += (edy/dist)*e.speed*dt;
+    }
+    e.flash = Math.max(0,e.flash-dt);
+    // 碰撞玩家
+    if(dist < player.r+e.r-2){
+      hitPlayer(10+e.maxHp*3);
+      enemies.splice(i,1);
+      enemiesThisWave--;
+    }
+  }
+  
+  // --- 粒子更新 ---
+  for(let i=particles.length-1;i>=0;i--){
+    const p=particles[i];
+    p.x+=p.vx*dt; p.y+=p.vy*dt;
+    p.vx*=0.96; p.vy*=0.96;
+    p.life-=dt;
+    if(p.life<=0) particles.splice(i,1);
+  }
+}
+
+// --- 渲染 ---
+function render(){
+  requestAnimationFrame(render);
+  if(!running&&particles.length===0) return;
+  
+  ctx.save();
+  ctx.translate(shakeX,shakeY);
+  
+  // 背景
+  ctx.fillStyle='#0a0a0a';
+  ctx.fillRect(-10,-10,W+20,H+20);
+  
+  // 网格线（动态）
+  ctx.strokeStyle='rgba(0,255,0,0.04)';
+  ctx.lineWidth=1;
+  const gs=60;
+  for(let x=(player.x%gs);x<W;x+=gs) {ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=(player.y%gs);y<H;y+=gs) {ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+  
+  // 粒子
+  for(const p of particles){
+    const alpha = Math.max(0,p.life/p.maxLife);
+    ctx.fillStyle = p.color.replace(')',`,${alpha})`).replace('rgb','rgba');
+    if(!p.color.includes('(')){
+      ctx.globalAlpha=alpha;
+      ctx.fillStyle=p.color;
+    }
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,p.size,0,Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha=1;
+  }
+  
+  // 敌人
+  for(const e of enemies){
+    ctx.fillStyle = e.flash>0?'#fff':e.color;
+    ctx.shadowColor = e.flash>0?'#fff':e.color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(e.x,e.y,e.r,0,Math.PI*2);
+    ctx.fill();
+    // 血条
+    if(e.hp<e.maxHp){
+      const bw=e.r*2, bh=4;
+      ctx.fillStyle='#333';
+      ctx.fillRect(e.x-bw/2,e.y-e.r-10,bw,bh);
+      ctx.fillStyle='#f00';
+      ctx.fillRect(e.x-bw/2,e.y-e.r-10,bw*(e.hp/e.maxHp),bh);
+    }
+    // 敌人眼睛
+    ctx.fillStyle='#000';
+    ctx.shadowBlur=0;
+    const ea = Math.atan2(player.y-e.y,player.x-e.x);
+    ctx.beginPath();ctx.arc(e.x+Math.cos(ea)*3,e.y+Math.sin(ea)*3,2.5,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(e.x+Math.cos(ea+0.5)*2,e.y+Math.sin(ea+0.5)*2,2,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(e.x+Math.cos(ea-0.5)*2,e.y+Math.sin(ea-0.5)*2,2,0,Math.PI*2);ctx.fill();
+  }
+  
+  // 子弹
+  ctx.shadowBlur=6;
+  for(const b of bullets){
+    ctx.fillStyle='#ff0';
+    ctx.shadowColor='#ff0';
+    ctx.beginPath();
+    ctx.arc(b.x,b.y,bulletSize,0,Math.PI*2);
+    ctx.fill();
+  }
+  ctx.shadowBlur=0;
+  
+  // 玩家
+  ctx.save();
+  ctx.translate(player.x,player.y);
+  ctx.rotate(player.angle);
+  // 加特林枪管
+  const barrelW=26,barrelH=5;
+  ctx.fillStyle='#555';
+  ctx.fillRect(2,-barrelH/2,barrelW,barrelH);
+  ctx.fillStyle='#888';
+  ctx.fillRect(2,-barrelH/2,barrelW*(0.3+Math.sin(performance.now()/80)*0.2),barrelH);
+  // 旋转枪管环
+  for(let i=0;i<4;i++){
+    const bx=10+i*5;
+    ctx.strokeStyle='#666';
+    ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.arc(bx,0,barrelH/2+1,0,Math.PI*2);ctx.stroke();
+  }
+  // 枪口
+  ctx.fillStyle='#f80';
+  ctx.shadowColor='#f80';
+  ctx.shadowBlur=10;
+  ctx.beginPath();ctx.arc(barrelW+2,0,4,0,Math.PI*2);ctx.fill();
+  ctx.shadowBlur=0;
+  // 身体
+  ctx.rotate(-player.angle);
+  ctx.fillStyle='#0af';
+  ctx.beginPath();ctx.arc(0,0,player.r,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#0ff';
+  ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(0,0,player.r,0,Math.PI*2);ctx.stroke();
+  // 护盾能量环
+  ctx.strokeStyle=`rgba(0,255,255,${0.3+Math.sin(performance.now()/500)*0.2})`;
+  ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(0,0,player.r+4,0,Math.PI*2);ctx.stroke();
+  ctx.restore();
+  
+  ctx.restore();
+}
+
+// 初始渲染循环
+render();
+
+// 鼠标光标跟随
+document.addEventListener('mousemove',e=>{if(!running) return;mx=e.clientX;my=e.clientY;crosshair.style.left=mx+'px';crosshair.style.top=my+'px'});
+</script>
+</body>
+</html>
