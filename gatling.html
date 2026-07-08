@@ -61,6 +61,19 @@ canvas{display:block}
 <div class="hud-item">🔫 射速: <span id="fr">8</span>/s</div>
 <div class="hud-item">💥 伤害: <span id="dmg">1</span></div>
 </div>
+<div id="keyhint" style="margin:10px 0 0 20px;display:flex;align-items:center;gap:14px;opacity:0.55;pointer-events:none;">
+  <div style="display:grid;grid-template-columns:44px 44px 44px;grid-template-rows:44px 44px;gap:4px;">
+    <div style="grid-column:2;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.25);border-radius:5px;display:flex;align-items:center;justify-content:center;color:#ccc;font-size:16px;font-weight:bold;">W</div>
+    <div style="background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.25);border-radius:5px;display:flex;align-items:center;justify-content:center;color:#ccc;font-size:16px;font-weight:bold;">A</div>
+    <div style="background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.25);border-radius:5px;display:flex;align-items:center;justify-content:center;color:#ccc;font-size:16px;font-weight:bold;">S</div>
+    <div style="background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.25);border-radius:5px;display:flex;align-items:center;justify-content:center;color:#ccc;font-size:16px;font-weight:bold;">D</div>
+  </div>
+  <div style="color:#aaa;font-size:22px;line-height:1.6;">
+    <div>🖱️ 鼠标瞄准 + 自动射击</div>
+    <div>⌨️ WASD / 方向键 移动</div>
+    <div style="color:#666;">P 暂停</div>
+  </div>
+</div>
 </div>
 
 <div id="crosshair"></div>
@@ -174,6 +187,8 @@ function startGame(){
   spawnWave();
   updateHUD();
   running=true;
+  document.getElementById('keyhint').style.opacity='0.55';
+  setTimeout(()=>{if(running)document.getElementById('keyhint').style.opacity='0.15';},5000);
   document.body.style.cursor='none';
   crosshair.style.display='block';
   gameLoop(performance.now());
@@ -257,6 +272,7 @@ function hitPlayer(dmg){
 
 function gameOver(){
   running=false;
+  document.getElementById('keyhint').style.opacity='0.55';
   document.getElementById('gostats').innerHTML = `
     击杀: <span style="color:#0f0">${kills}</span><br>
     波次: <span style="color:#ff0">${wave}</span><br>
